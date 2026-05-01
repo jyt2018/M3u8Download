@@ -155,6 +155,12 @@ class M3u8Download:
             if "#" in line:
                 if "EXT-X-KEY" in line and "URI=" in line:
                     if os.path.exists(os.path.join(self._file_path, 'key')):
+                        # key文件已存在，构造正确的key行并添加到m3u8文件中
+                        mid_part = re.search(r"URI=[\'|\"].*?[\'|\"]", line).group()
+                        # 使用相对路径引用key文件，确保路径使用正斜杠
+                        file_path_forward_slash = self._file_path.replace('\\', '/')
+                        key_line = f'{line.split(mid_part)[0]}URI="{file_path_forward_slash}/key"{line.split(mid_part)[-1]}'
+                        new_m3u8_str += f'{key_line}\n'
                         continue
                     key = self.download_key(line, 5)
                     if key:
@@ -170,10 +176,12 @@ class M3u8Download:
                     self._ts_url_list.append(self._front_url + line)
                 else:  # 相对路径, 需要拼接
                     self._ts_url_list.append(self._m3u8_url.rsplit("/", 1)[0] + '/' + line)
-                new_m3u8_str += (os.path.join(self._file_path, str(next(ts))+".ts") + '\n')  # .ts扩展名是强行增加的，有的m3u8文件没有扩展名，或者是jpeg等其他扩展名
+                # 使用正斜杠拼接路径，符合m3u8标准，确保跨平台兼容性
+                ts_path = f"{self._file_path}/{str(next(ts))}.ts"
+                new_m3u8_str += (ts_path + '\n')  # .ts扩展名是强行增加的，有的m3u8文件没有扩展名，或者是jpeg等其他扩展名
         self._ts_sum = next(ts)
         with open(self._file_path + '.m3u8', "wb") as f:
-            # 使用标准UTF-8编码，不添加BOM标记，确保ffmpeg能正确解析
+            # 使用标准UTF-8编码（无BOM），ffmpeg不喜欢BOM标记
             f.write(new_m3u8_str.encode('utf-8'))
 
     def download_ts(self, ts_url, name, num_retries):
@@ -222,8 +230,9 @@ class M3u8Download:
         if self._key:
             with open(key_path, 'wb') as f:
                 f.write(self._key)
-            # 使用相对路径引用key文件
-            return f'{key_line.split(mid_part)[0]}URI="./{os.path.basename(self._file_path)}/key"{key_line.split(mid_part)[-1]}'
+            # 使用相对路径引用key文件，确保路径使用正斜杠，与ts路径保持一致
+            file_path_forward_slash = self._file_path.replace('\\', '/')
+            return f'{key_line.split(mid_part)[0]}URI="{file_path_forward_slash}/key"{key_line.split(mid_part)[-1]}'
         
         if may_key_url.startswith('http'):
             true_key_url = may_key_url
@@ -236,8 +245,9 @@ class M3u8Download:
             with requests.get(true_key_url, timeout=(5, 30), verify=False, headers=self._headers) as res:
                 with open(key_path, 'wb') as f:
                     f.write(res.content)
-            # 使用相对路径引用key文件
-            return f'{key_line.split(mid_part)[0]}URI="./{os.path.basename(self._file_path)}/key"{key_line.split(mid_part)[-1]}'
+            # 使用相对路径引用key文件，确保路径使用正斜杠，与ts路径保持一致
+            file_path_forward_slash = self._file_path.replace('\\', '/')
+            return f'{key_line.split(mid_part)[0]}URI="{file_path_forward_slash}/key"{key_line.split(mid_part)[-1]}'
         except Exception as e:
             print(e)
             if os.path.exists(key_path):
