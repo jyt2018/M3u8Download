@@ -24,10 +24,10 @@ import os
 import re
 import sys
 import queue
-import base64
 import requests
 import urllib3
 from concurrent.futures import ThreadPoolExecutor
+from lib_downvideo import decode_base64_key
 
 class ThreadPoolExecutorWithQueueSizeLimit(ThreadPoolExecutor):
     """
@@ -84,7 +84,7 @@ class M3u8Download:
         self._ts_url_list = []
         self._success_sum = 0
         self._ts_sum = 0
-        self._key = base64.b64decode(base64_key.encode()) if base64_key else None
+        self._key = decode_base64_key(base64_key)
         self._headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/84.0.4147.105 Safari/537.36'}
 
         urllib3.disable_warnings()

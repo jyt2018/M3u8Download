@@ -1,3 +1,21 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+lib_downvideo - 视频下载相关工具库
+
+功能:
+    1. 从播放页面提取 m3u8 地址
+    2. 处理 m3u8 文件中的广告片段
+    3. 提供 URL 解析和处理工具函数
+    4. 提供 base64 密钥解密功能
+
+依赖:
+    - requests: HTTP 请求库
+    - beautifulsoup4: HTML 解析库
+
+Author: unixsam, 2026-05-02
+"""
+
 import os
 import requests
 from bs4 import BeautifulSoup
@@ -6,189 +24,195 @@ import unicodedata
 import datetime
 import re
 import logging
+import base64
 from urllib.parse import urlparse, urljoin
-import lib_findbook as fb
+import random
 
-# 1. 读取 URL
-#   使用 requests.get 获取 m3u8 文件内容。
-#   如果出现网络错误，捕获异常并结束函数。
 
-# 2. 判断域名中是否同时包含 "lz" 和 "cdn"
-#   使用 urlparse(m3u8_url).netloc 提取域名部分。
-#   检查域名中是否同时包含 "lz" 和 "cdn"。如果没有，输出提示信息并结束函数。
+USER_AGENT_LIST = [
+    'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.85 Safari/537.36 115Browser/6.0.3',
+    'Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_8; en-us) AppleWebKit/534.50 (KHTML, like Gecko) Version/5.1 Safari/534.50',
+    'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-us) AppleWebKit/534.50 (KHTML, like Gecko) Version/5.1 Safari/534.50',
+    'Mozilla/5.0 (Windows NT 6.1; rv:2.0.1) Gecko/20100101 Firefox/4.0.1',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_7_0) AppleWebKit/535.11 (KHTML, like Gecko) Chrome/17.0.963.56 Safari/535.11',
+    'Mozilla/5.0 (compatible; MSIE 9.0; Windows NT 6.1; Trident/5.0)',
+    'Mozilla/5.0 (Windows NT 6.1; rv:2.0.1) Gecko/20100101 Firefox/4.0.1',
+    "Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.75 Mobile Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/85.0.4183.121 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:80.0) Gecko/20100101 Firefox/80.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.2 Safari/605.1.15"
+]
 
-# 3. 读取所有视频片段文件名，并查找插入的行（b）及其行号
-#   - 遍历 m3u8 文件的每一行，提取以 .ts 结尾的文件名及其行号。
-#   - 检查文件名中的数字部分是否连续。
-#   - 如果当前行与上一行不连续，且下一行与当前行也不连续，则当前行为插入行（b）。
-#   - 输出插入行（b）的 URL 及其行号。
+
+def rnd_header():
+    """
+    生成随机 User-Agent 的 HTTP 请求头。
+
+    从 USER_AGENT_LIST 中随机选择一个 User-Agent，
+    构造并返回包含该 User-Agent 的请求头字典。
+
+    :return: 包含随机 User-Agent 的请求头字典
+    :rtype: dict
+    """
+    user_agent = random.choice(USER_AGENT_LIST)
+    headers = {
+        'User-Agent': user_agent
+    }
+    return headers
+
+
 def remove_m3u8_ad(m3u8_content):
     """
-    处理 m3u8 文件的 URL, 提取视频片段文件名 和 插入的广告行。
-    1. 读取 URL。
-    2. 判断域名中是否同时包含 "lz" 和 "cdn"，如果没有则结束函数。量子云
-    3. 如果包含，读取所有视频片段文件名，查找插入的广告及其行号。
-    :param m3u8_url: 真正m3u8 文件的 URL
+    从 m3u8 文件内容中移除广告片段。
+
+    通过检测 ts 文件名中的数字是否连续来识别广告片段。
+    当发现文件名中的数字不连续时，判定为进入或退出广告区域。
+
+    :param m3u8_content: m3u8 文件的原始内容
+    :type m3u8_content: str
+    :return: 移除广告片段后的 m3u8 文件内容
+    :rtype: str
+
+    示例:
+        >>> original = "#EXTM3U\n#EXTINF:10,\nvideo001.ts\n#EXTINF:5,\nad001.ts\n#EXTINF:10,\nvideo002.ts\n"
+        >>> result = remove_m3u8_ad(original)
+        >>> print(result)
+        #EXTM3U
+        #EXTINF:10,
+        video001.ts
+        #EXTINF:10,
+        video002.ts
     """
-    # 1. 读取 URL, 但是这可能是一个已经下载好的m3u8文件，所以不用再次下载
-    # if validators.url(m3u8_url):
-    #     try:
-    #         res = requests.get(m3u8_url)
-    #         res.raise_for_status()
-    #         m3u8_content = res.text
-    #     except requests.RequestException as e:
-    #         print(f"获取 m3u8 文件时出现网络错误: {e}")
-    #         return
-
-    # 2. 判断域名中是否同时包含 "lz" 和 "cdn"
-    # domain = urlparse(m3u8_url).netloc  # 获取域名部分
-    # if "lz" not in domain or "cdn" not in domain:
-    #     print(f"域名 {domain} 中不包含 'lz' 和 'cdn'，结束处理。")
-    #     return
-
-    # 3. 读取所有视频片段文件名，并查找插入的行（b）及其行号
-    lines = m3u8_content.splitlines(keepends=True)  # 按行分割，保留行尾符, 便于写回文件
+    lines = m3u8_content.splitlines(keepends=True)
     ts_filenames = []
     ts_line_numbers = []
-    ad_lines_list = [] # 广告行
-    # 提取所有 .ts 文件名及其行号
-    for i, line in enumerate(lines, start=1):  # 行号从 1 开始计数，方便编辑软件查看
-        if line.startswith("#EXTI"):  # 找到以 #EXTINF 开头的行
-            # 下一行是视频片段 URL
+    ad_lines_list = []
+
+    for i, line in enumerate(lines, start=1):
+        if line.startswith("#EXTI"):
             if i < len(lines):
-                ts_url = lines[i]  # i从1开始计数，实际是第 i+1 行
+                ts_url = lines[i]
                 ts_filenames.append(ts_url)
-                ts_line_numbers.append(i + 1)  # EXTINF 行号 + 1 = URL 行号
+                ts_line_numbers.append(i + 1)
+
     print(len(ts_filenames), len(ts_line_numbers))
 
     if not ts_filenames:
         print("未找到包含视频片段的行。")
-        return
+        return m3u8_content
 
-    # 查找广告行
     print("以下为插入的ad行: \n")
-    Ad_in = False  # 是否进入广告状态
+    Ad_in = False
     for j in range(2, len(ts_filenames)):
         prev_filename = ts_filenames[j - 1]
         curr_filename = ts_filenames[j]
 
-        # 这行代码的主要功能是从字符串 prev_filename 中提取最后一个路径组件（通常是文件名）里的所有数字字符，然后将这些数字字符连接成一个新的字符串, 再转换为整数，判断是否连续
         try:
             prev_num = int(''.join(filter(str.isdigit, prev_filename.split("/")[-1])))
             curr_num = int(''.join(filter(str.isdigit, curr_filename.split("/")[-1])))
-
-        # 改为判断字符数量 地址长度是否相同
-        # try:
-        #     prev_num = len(prev_filename.split("/")[-1])
-        #     curr_num = len(curr_filename.split("/")[-1]) + 1 # 配合后面的代码，不用再改了
         except ValueError:
             print(f"文件名格式不符合要求，无法判断连续性：{prev_filename}, {curr_filename}")
             continue
 
-        # 遇到了不连续的情况，切换是否进入广告状态
         if curr_num != prev_num + 1:
             Ad_in = not Ad_in
-            if Ad_in:  # 进入广告状态
+            if Ad_in:
                 print("ad in after", ts_filenames[j-1].strip())
                 print(f"{curr_filename.strip()},行号in:{ts_line_numbers[j]}")
-                ad_lines_list.append(ts_line_numbers[j] - 1) # 把#EXTINF行也加进去
+                ad_lines_list.append(ts_line_numbers[j] - 1)
                 ad_lines_list.append(ts_line_numbers[j])
-            else:  # 退出广告状态
+            else:
                 print(f"ad area +1 {ts_filenames[j-1].strip()}")
                 _ = input("continue")
         else:
             if Ad_in:
                 print(f"{curr_filename.strip()},行号-:{ts_line_numbers[j]}")
-                ad_lines_list.append(ts_line_numbers[j] - 1) # 把#EXTINF行也加进去
+                ad_lines_list.append(ts_line_numbers[j] - 1)
                 ad_lines_list.append(ts_line_numbers[j])
             else:
-                pass # 正常行
+                pass
     print(ad_lines_list)
 
-    # 这里也可以返回一个list，然后在主函数中写入文件
-    lines_no_ad = [lines[i-1] for i in range(1, len(lines)+1) if i not in ad_lines_list] # 从1开始计数, 和lines保持一致
-    return ''.join(lines_no_ad)  # 返回无广告的 m3u8 文件内容
-    
-    # 保存无广告的 m3u8 文件
-    # with open("noad.m3u8", 'w', encoding='utf-8') as file:
-    #     for item in lines_no_ad:
-    #         # 将元素写入文件，无需添加换行符, splitlines(keepends=True)
-    #         file.write(item)
+    lines_no_ad = [lines[i-1] for i in range(1, len(lines)+1) if i not in ad_lines_list]
+    return ''.join(lines_no_ad)
+
 
 def get_domain_by_url(url):
     """
-    拆分 URL, 获取协议、域名、路径、文件名和后缀。其实urllib.parse import urljoin可以解决大部分问题
-    :param url: 完整的 URL
-    :return: 元组 (协议+域名, 路径, 文件名, 后缀)
+    解析 URL，获取协议、域名、路径、文件名和后缀。
+
+    :param url: 完整的 URL 地址
+    :type url: str
+    :return: 包含以下元素的元组:
+        - 协议+域名 (str): 如 "https://www.example.com"
+        - 路径 (str): URL 中的路径部分
+        - 文件名 (str): 路径中的最后一个组件
+        - 后缀 (tuple): 文件名和后缀的元组
+    :rtype: tuple
+
+    示例:
+        >>> get_domain_by_url("https://www.example.com/path/to/video.html")
+        ('https://www.example.com', '/path/to/video.html', 'video.html', ('video', '.html'))
     """
-    url_sche = urllib.parse.urlparse(url).scheme  # 协议，如 https
-    url_netloc = urllib.parse.urlparse(url).netloc  # 域名，如 www.123.com
-    url_path = urllib.parse.urlparse(url).path  # 路径，如 /2134/45/a.html
-    uname = os.path.basename(url_path)  # 全文件名，如 a.html
-    suffix = os.path.splitext(uname)  # 后缀，如 ('.html',)
+    url_sche = urllib.parse.urlparse(url).scheme
+    url_netloc = urllib.parse.urlparse(url).netloc
+    url_path = urllib.parse.urlparse(url).path
+    uname = os.path.basename(url_path)
+    suffix = os.path.splitext(uname)
 
     return f"{url_sche}://{url_netloc}", url_path, uname, suffix
 
 
 def extract_m3u8_from_playpage(url_in):
-    """ 内部使用的函数，
-    从播放页面 URL 中提取 m3u8 地址。
-    :param url_in: 播放页面 URL
-    :return: 元组 (m3u8_url, "m3u8") 或 (错误信息, "err")
+    """
+    从视频播放页面 URL 中提取 m3u8 地址。
+
+    通过解析 HTML 页面中的 JavaScript 代码，查找 player_aaaa 对象，
+    并从中提取视频播放地址。
+
+    :param url_in: 视频播放页面的 URL
+    :type url_in: str
+    :return: 提取到的 m3u8 地址（或其他视频地址），如果提取失败则返回空字符串
+    :rtype: str
+
+    注意:
+        目前支持的网站结构:
+        - 查找 class 为 'hl-player-wrap embed-responsive embed-responsive-16by9 by-qq362695000 clearfix' 的 div
+        - 在该 div 内查找第一个 script 标签
+        - 从 script 中提取 var player_aaaa 对象
+        - 从 player_aaaa 中提取 url 字段
     """
     try:
-        # 发送 HTTP 请求
-
-        response = requests.get(url_in, headers=fb.rnd_header())
-        response.encoding = 'utf-8'  # 确保正确的编码
-        # print(response.text)
-        # 使用 BeautifulSoup 解析 HTML
+        response = requests.get(url_in, headers=rnd_header())
+        response.encoding = 'utf-8'
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # 查找指定的 div 标签 dzyy.cc
         div_tag = soup.find('div', class_='hl-player-wrap embed-responsive embed-responsive-16by9 by-qq362695000 clearfix')
         if not div_tag:
             return ""
 
-        # 查找第一个 script 标签
         script_tag = div_tag.find('script')
         if not script_tag:
             return ""
 
-        # 提取 JavaScript 代码
         jscode = script_tag.string
         if not jscode:
             return ""
 
-        # 使用正则表达式查找 player_aaaa 对象
         match = re.search(r'var player_aaaa=(.*)', jscode)
         if not match:
             return ""
 
-        # 提取 player_aaaa 对象中的 url 值
         js_str = match.group(1)
         url_match = re.search(r'"url":"([^"]+)"', js_str)
         if not url_match:
             return ""
-        # 处理 url 并检查是否为 m3u8 格式
         url_m = url_match.group(1).replace("\\", "")
         if url_m.endswith("m3u8"):
             return url_m
         else:
-            return url_m  # ayiqi，这里返回的是非m3u8的url，可能是.html, 暂时先把这个html写在u字段里
+            return url_m
 
-        ## ccy1.com
-        # ifrdiv = soup.find("div", id="tem_vod_box")  # script 的div
-        # if ifrdiv:
-        #     scriptm3u8 = ifrdiv.find_all("script")[4].string
-        #     matchline = re.search(r'var temPlayRenderCode(.*)', scriptm3u8)
-        #     varline = matchline.group(1)
-        #     srcarea = re.search(r'url=([^\']+)', varline)
-        #     m3url = srcarea.group(1)
-        #     print(m3url)
-        #     return m3url
-        # else:
-        #     return "aaa"
     except Exception as e:
         print(e)
         return "eee"
@@ -196,11 +220,19 @@ def extract_m3u8_from_playpage(url_in):
 
 def mklocaldir(subpath):
     """
-    创建本地目录，如果目录不存在则创建。
-    :param subpath: 子目录路径
+    创建本地存储目录。
+
+    如果提供了子路径，则在当前工作目录下创建该子路径；
+    如果未提供子路径（空字符串），则以当前日期（格式: %y%m%d）创建目录。
+
+    :param subpath: 子目录路径，可以为空字符串
+    :type subpath: str
+
+    注意:
+        - 目录已存在时不会报错
+        - 只会创建一级目录（不会递归创建多级目录）
     """
-    # 新建日期文件夹，如果没有指定文件存储位置，就用年月日创建文件夹，否则用指定的文件夹
-    if not subpath:  # ""
+    if not subpath:
         savefile_path = os.path.join(subpath, datetime.datetime.now().strftime('%y%m%d'))
     else:
         savefile_path = os.path.join(subpath, savefile_path)
@@ -218,25 +250,37 @@ def mklocaldir(subpath):
 def file2dict(filepath):
     """
     将结构化的文本文件转换为字典。
-    :param filepath: 文件路径
-    :return: 字典，键为 URL, 值为标题
+
+    文件格式要求:
+        每行格式: URL|标题
+        例如: https://example.com/video1|第一集 开始
+
+    :param filepath: 结构化文本文件的路径
+    :type filepath: str
+    :return: 字典，键为 URL，值为标题
+    :rtype: dict
+
+    示例:
+        文件内容:
+            https://example.com/ep1|第一集
+            https://example.com/ep2|第二集
+        返回:
+            {'https://example.com/ep1': '第一集', 'https://example.com/ep2': '第二集'}
     """
     listDict = dict()
     os.chdir(".")
     with open(filepath, encoding='utf-8') as f_menulist:
         try:
-            lines = f_menulist.readlines()  # 读取全部内容，并以列表方式返回
-            filesum = len(lines)  # 一共有多少章，即目录文件有多少行
+            lines = f_menulist.readlines()
+            filesum = len(lines)
             print("Total: " + str(filesum) + " links in menulist")
 
-            # 读取全部或者一定的行数
             linesToRead = filesum
-            linesStart = 0  # 从哪一行开始读取。从第一行开始则写0.
+            linesStart = 0
             for i in range(linesStart, linesStart + linesToRead):
-                # 获取网址和每章标题
                 currentline = lines[i].split("|")
                 currenturl = currentline[0]
-                currenttitle = currentline[1].strip()  # 去除换行符
+                currenttitle = currentline[1].strip()
                 listDict[currenturl] = currenttitle
         finally:
             f_menulist.close()
@@ -246,9 +290,22 @@ def file2dict(filepath):
 
 def clean_unicode(text):
     """
-    清理 ambiguous Unicode 字符。
-    :param text: 输入的字符串
+    清理字符串中的异常 Unicode 字符和 HTML 实体。
+
+    处理的内容包括:
+    1. 替换常见的 HTML 实体（如 &nbsp;, &amp; 等）
+    2. 移除 Unicode 行分隔符 (U+2028) 和段落分隔符 (U+2029)
+    3. 使用 NFKC 规范化 Unicode 字符
+    4. 移除所有控制字符
+
+    :param text: 需要清理的原始字符串
+    :type text: str
     :return: 清理后的字符串
+    :rtype: str
+
+    示例:
+        >>> clean_unicode("Hello&nbsp;World&amp;Test")
+        'Hello World&Test'
     """
     replace_dict = {
         "&nbsp;": " ",
@@ -264,11 +321,10 @@ def clean_unicode(text):
     }
     if not isinstance(text, str):
         return text
-    # 替换 replace_dict 中定义的字符
     for key, value in replace_dict.items():
         text = text.replace(key, value)
-    text = text.replace('\u2028', ' ').replace('\u2029', ' ')  # 替换 Unicode 字符 不寻常的换行符 vscode提示的东西 LS PS
-    
+    text = text.replace('\u2028', ' ').replace('\u2029', ' ')
+
     return "".join(
         char for char in unicodedata.normalize("NFKC", text) if not unicodedata.category(char).startswith("C")
     )
@@ -277,21 +333,37 @@ def clean_unicode(text):
 def split_file_path(file_full_path):
     """
     拆分文件路径，获取目录、文件名和后缀。
-    :param file_full_path: 完整文件路径
-    :return: 元组 (目录, 仅文件名, 后缀)
-    """
-    directory = os.path.abspath(file_full_path)  # 获取文件所在的目录路径
-    filename_with_ext = os.path.basename(file_full_path)  # 获取文件名（包含扩展名）
-    filename, extension = os.path.splitext(filename_with_ext)  # 分离文件名和扩展名
-    return directory, filename, extension
 
+    :param file_full_path: 完整的文件路径（绝对路径或相对路径）
+    :type file_full_path: str
+    :return: 包含以下元素的元组:
+        - 目录 (str): 文件所在的目录路径（绝对路径）
+        - 文件名 (str): 不含后缀的文件名
+        - 后缀 (str): 文件后缀（包含点号，如 '.mp4'）
+    :rtype: tuple
+
+    示例:
+        >>> split_file_path("/home/user/video.mp4")
+        ('/home/user', 'video', '.mp4')
+    """
+    directory = os.path.abspath(file_full_path)
+    filename_with_ext = os.path.basename(file_full_path)
+    filename, extension = os.path.splitext(filename_with_ext)
+    return directory, filename, extension
 
 
 def get_second_layer_m3u8(url):
     """
-    获取第二层 m3u8 地址
-    :param url: 第一层 m3u8 地址
-    :return: 第二层 m3u8 地址或 None
+    从第一层 m3u8 文件中获取第二层 m3u8 地址。
+
+    有些 m3u8 文件是多级结构：第一层包含不同清晰度的选项，
+    每个选项指向另一个 m3u8 文件（第二层），第二层才包含实际的 ts 片段。
+
+    :param url: 第一层 m3u8 文件的 URL
+    :type url: str
+    :return: 第二层 m3u8 地址（文件中找到的第一个 .m3u8 结尾的行），
+             如果获取失败或未找到则返回 None
+    :rtype: str or None
     """
     try:
         response = requests.get(url, timeout=5)
@@ -304,3 +376,28 @@ def get_second_layer_m3u8(url):
     except Exception as e:
         logging.error(f"获取第二层 m3u8 地址时发生错误：{e}")
         return None
+
+
+def decode_base64_key(base64_key_str):
+    """
+    将 base64 编码的字符串解码为二进制密钥数据。
+
+    用于解密加密的 m3u8 视频。当视频使用 AES 加密时，
+    可以通过此函数将 base64 编码的密钥解码为二进制格式。
+
+    :param base64_key_str: base64 编码的密钥字符串
+    :type base64_key_str: str
+    :return: 解码后的二进制密钥数据，如果输入为 None 则返回 None
+    :rtype: bytes or None
+
+    示例:
+        >>> key = decode_base64_key("5N12sDHDVcx1Hqnagn4NJg==")
+        >>> print(type(key))
+        <class 'bytes'>
+
+    注意:
+        解码后的密钥可以直接写入 key 文件供 ffmpeg 使用
+    """
+    if base64_key_str:
+        return base64.b64decode(base64_key_str.encode())
+    return None
